@@ -8,14 +8,28 @@ static PlaylistManifest parse(const char *json) {
   return parsePlaylist_manifest(doc);
 }
 
-void test_absent_playlist_is_not_present(void) {
-  const PlaylistManifest manifest = parse(R"({"status":200,"image_url":"http://example.com/a.bmp"})");
-
+// Every malformed manifest must land in the same state as "the server sent no playlist", so the
+// caller falls back to stock behaviour and the device never rotates over a half-parsed set.
+static void assert_rejected(const PlaylistManifest &manifest) {
   TEST_ASSERT_FALSE(manifest.present);
   TEST_ASSERT_FALSE(manifest.unchanged);
   TEST_ASSERT_EQUAL_STRING("", manifest.checksum.c_str());
   TEST_ASSERT_EQUAL_INT(0, (int)manifest.entries.size());
   TEST_ASSERT_FALSE(manifest.has_entries());
+}
+
+void test_absent_playlist_is_not_present(void) {
+  const PlaylistManifest manifest = parse(R"({"status":200,"image_url":"http://example.com/a.bmp"})");
+
+  assert_rejected(manifest);
+}
+
+void test_null_playlist_is_absent(void) { assert_rejected(parse(R"({"playlist":null})")); }
+
+void test_non_object_playlist_is_rejected(void) {
+  assert_rejected(parse(R"({"playlist":"abc123"})"));
+  assert_rejected(parse(R"({"playlist":[]})"));
+  assert_rejected(parse(R"({"playlist":42})"));
 }
 
 void test_unchanged_ack(void) {
@@ -74,49 +88,60 @@ void test_missing_sha256_is_allowed(void) {
   TEST_ASSERT_TRUE(manifest.has_entries());
 }
 
-void test_entries_without_filename_or_url_are_dropped(void) {
+void test_entry_without_filename_rejects_manifest(void) {
   const PlaylistManifest manifest = parse(R"({
       "playlist": {
         "checksum": "c2",
         "entries": [
-          {"filename": "", "url": "http://e/a.png", "sha256": "aa"},
-          {"filename": "b.png", "url": "", "sha256": "bb"},
-          {"filename": "c.png", "url": "http://e/c.png", "sha256": "cc"}
+          {"filename": "good.png", "url": "http://e/good.png", "sha256": "aa"},
+          {"filename": "", "url": "http://e/b.png", "sha256": "bb"}
         ]
       }
     })");
 
-  TEST_ASSERT_TRUE(manifest.present);
-  TEST_ASSERT_EQUAL_INT(1, (int)manifest.entries.size());
-  TEST_ASSERT_EQUAL_STRING("c.png", manifest.entries[0].filename.c_str());
-  TEST_ASSERT_TRUE(manifest.has_entries());
+  assert_rejected(manifest);
 }
 
-void test_all_entries_dropped_is_a_deactivation(void) {
-  const PlaylistManifest manifest =
-    parse(R"({"playlist":{"checksum":"c3","entries":[{"filename":"","url":""},{"filename":"b.png"}]}})");
+void test_entry_without_url_rejects_manifest(void) {
+  const PlaylistManifest manifest = parse(R"({
+      "playlist": {
+        "checksum": "c3",
+        "entries": [{"filename": "a.png", "url": "", "sha256": "aa"}]
+      }
+    })");
 
-  TEST_ASSERT_TRUE(manifest.present);
-  TEST_ASSERT_FALSE(manifest.unchanged);
-  TEST_ASSERT_EQUAL_INT(0, (int)manifest.entries.size());
-  TEST_ASSERT_FALSE(manifest.has_entries());
+  assert_rejected(manifest);
 }
 
-void test_entries_without_checksum_are_rejected(void) {
-  const PlaylistManifest manifest =
-    parse(R"({"playlist":{"entries":[{"filename":"a.png","url":"http://e/a.png","sha256":"aa"}]}})");
+void test_entry_without_url_field_rejects_manifest(void) {
+  const PlaylistManifest manifest = parse(R"({
+      "playlist": {"checksum": "c4", "entries": [{"filename": "a.png", "sha256": "aa"}]}
+    })");
 
-  TEST_ASSERT_FALSE(manifest.present);
-  TEST_ASSERT_FALSE(manifest.unchanged);
-  TEST_ASSERT_EQUAL_STRING("", manifest.checksum.c_str());
-  TEST_ASSERT_EQUAL_INT(0, (int)manifest.entries.size());
-  TEST_ASSERT_FALSE(manifest.has_entries());
+  assert_rejected(manifest);
 }
 
-void test_non_object_playlist_is_absent(void) {
-  TEST_ASSERT_FALSE(parse(R"({"playlist":null})").present);
-  TEST_ASSERT_FALSE(parse(R"({"playlist":"abc123"})").present);
-  TEST_ASSERT_FALSE(parse(R"({"playlist":[]})").present);
+void test_non_object_entry_rejects_manifest(void) {
+  const PlaylistManifest manifest = parse(R"({
+      "playlist": {
+        "checksum": "c5",
+        "entries": [{"filename": "a.png", "url": "http://e/a.png"}, "http://e/b.png"]
+      }
+    })");
+
+  assert_rejected(manifest);
+}
+
+void test_entries_not_an_array_rejects_manifest(void) {
+  assert_rejected(parse(R"({"playlist":{"checksum":"c6","entries":{"filename":"a.png"}}})"));
+  assert_rejected(parse(R"({"playlist":{"checksum":"c7","entries":"a.png"}})"));
+  // A manifest that is neither an ack nor an entry list carries nothing usable.
+  assert_rejected(parse(R"({"playlist":{"checksum":"c8"}})"));
+}
+
+void test_entries_without_checksum_reject_manifest(void) {
+  assert_rejected(parse(R"({"playlist":{"entries":[{"filename":"a.png","url":"http://e/a.png"}]}})"));
+  assert_rejected(parse(R"({"playlist":{"checksum":"","entries":[{"filename":"a.png","url":"http://e/a.png"}]}})"));
 }
 
 void setUp(void) {}
@@ -125,14 +150,18 @@ void tearDown(void) {}
 void process() {
   UNITY_BEGIN();
   RUN_TEST(test_absent_playlist_is_not_present);
+  RUN_TEST(test_null_playlist_is_absent);
+  RUN_TEST(test_non_object_playlist_is_rejected);
   RUN_TEST(test_unchanged_ack);
   RUN_TEST(test_empty_entries_deactivates);
   RUN_TEST(test_two_entries_keep_order_and_fields);
   RUN_TEST(test_missing_sha256_is_allowed);
-  RUN_TEST(test_entries_without_filename_or_url_are_dropped);
-  RUN_TEST(test_all_entries_dropped_is_a_deactivation);
-  RUN_TEST(test_entries_without_checksum_are_rejected);
-  RUN_TEST(test_non_object_playlist_is_absent);
+  RUN_TEST(test_entry_without_filename_rejects_manifest);
+  RUN_TEST(test_entry_without_url_rejects_manifest);
+  RUN_TEST(test_entry_without_url_field_rejects_manifest);
+  RUN_TEST(test_non_object_entry_rejects_manifest);
+  RUN_TEST(test_entries_not_an_array_rejects_manifest);
+  RUN_TEST(test_entries_without_checksum_reject_manifest);
   UNITY_END();
 }
 

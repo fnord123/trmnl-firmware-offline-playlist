@@ -27,7 +27,9 @@ struct PlaylistManifest {
   bool has_entries() const { return present && !unchanged && !entries.empty(); }
 };
 
-// Read the optional "playlist" member out of a /api/display JSON document. Entries without a
-// filename or URL are dropped; a manifest left with entries but no checksum is rejected and
-// reported as absent.
+// Read the optional "playlist" member out of a /api/display JSON document. The manifest is
+// all-or-nothing: a missing or non-object "playlist" is absent, and anything malformed inside a
+// present one - an entry without a filename or URL, a non-object entry, a non-unchanged manifest
+// whose "entries" is not an array, or entries without a checksum - rejects the whole manifest and
+// is reported as absent. Every rejection logs why.
 PlaylistManifest parsePlaylist_manifest(const JsonDocument &doc);
