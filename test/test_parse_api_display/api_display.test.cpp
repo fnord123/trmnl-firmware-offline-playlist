@@ -11,6 +11,11 @@ void assert_response_equal(ApiDisplayResponse expected, ApiDisplayResponse actua
   TEST_ASSERT_EQUAL(expected.reset_firmware, actual.reset_firmware);
   TEST_ASSERT_EQUAL(expected.special_function, actual.special_function);
   TEST_ASSERT_EQUAL_STRING(expected.action.c_str(), actual.action.c_str());
+  // No spec above serves a "playlist" field, so none may report one.
+  TEST_ASSERT_FALSE(actual.playlist.present);
+  TEST_ASSERT_FALSE(actual.playlist.unchanged);
+  TEST_ASSERT_EQUAL_STRING("", actual.playlist.checksum.c_str());
+  TEST_ASSERT_EQUAL_UINT32(0, actual.playlist.entries.size());
 }
 
 void test_parseResponse_apiDisplay_success(void) {

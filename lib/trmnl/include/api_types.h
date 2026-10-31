@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <vector>
 
 #include "hardware_types.h"
 #include "special_function.h"
@@ -23,6 +24,25 @@ enum class ApiDisplayOutcome {
   DeserializationError,
 };
 
+// One screen of an offline playlist manifest, as served in the "playlist"
+// field of /api/display.
+struct ApiPlaylistEntry {
+  String filename;
+  String url;
+  String sha256;
+};
+
+// The manifest the device rotates between while offline. "present" is false
+// when the response carried no "playlist" field at all; a present manifest
+// with no entries tells the device to stop rotating. "unchanged" means the
+// server acknowledged the device's checksum and sent no entries.
+struct ApiPlaylist {
+  bool present;
+  bool unchanged;
+  String checksum;
+  std::vector<ApiPlaylistEntry> entries;
+};
+
 struct ApiDisplayResponse {
   ApiDisplayOutcome outcome;
   String error_detail;
@@ -38,6 +58,7 @@ struct ApiDisplayResponse {
   bool reset_firmware;
   SPECIAL_FUNCTION special_function;
   String action;
+  ApiPlaylist playlist;
 };
 
 struct ApiDisplayInputs {
